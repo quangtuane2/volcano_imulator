@@ -3,9 +3,7 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
-#include <cstdlib>
-#include <ctime>
-
+#include <algorithm>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -20,63 +18,46 @@ std::vector<float> vertices;
 std::vector<float> normals;
 GLuint shaderProgram;
 
-GLuint uTimeLocation;
-
 // Phép chiếu
 bool isPerspective = true;
 
-// Góc xoay vật thể (Mouse và Phím mũi tên)
-float rotationX = 0.0f; // Góc xoay quanh trục X 
-float rotationY = 0.0f; // Góc xoay quanh trục Y
+// Camera controls
+float rotationX = 0.2f; 
+float rotationY = 0.0f;
+float eyeX = 0.0f, eyeY = 4.0f, eyeZ = 12.0f; 
+float centerX = 0.0f, centerY = 0.0f, centerZ = 0.0f;
+float upX = 0.0f, upY = 1.0f, upZ = 0.0f;
+float zoom = 1.0f;
+bool isWireframe = false;
 
-// Vị trí quan sát (Camera) (Phím W,A,S,D,R,F)
-float eyeX = 0.0f, eyeY = 1.0f, eyeZ = 4.0f; // Vị trí mắt nhìn 
-float centerX = 0.0f, centerY = -0.5f, centerZ = 0.0f; // Điểm nhìn tới (nhìn vào chân núi)
-float upX = 0.0f, upY = 1.0f, upZ = 0.0f; // Hướng "lên" của camera
-
-// Phóng to / Thu nhỏ (Scroll và phím +,-)
-float zoom = 1.0f; // Hệ số zoom (sẽ dùng làm glScale)
-
-// Trạng thái (Phím 'M')
-bool isWireframe = false; // true = khung dây, false = mặt đa giác
-
-// Camera
+// Mouse state
 bool mousePressed = false;
 double lastX, lastY;
 
-// Vector 3D cơ bản
-struct Vec3 {
-    float x, y, z;
-};
+struct Vec3 { float x, y, z; };
 
 Vec3 normalize(Vec3 v) {
     float len = sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
-    if (len > 0.0f) {
-        return {v.x / len, v.y / len, v.z / len};
-    }
+    if (len > 0.0f) return {v.x / len, v.y / len, v.z / len};
     return v;
 }
 
 Vec3 cross(Vec3 a, Vec3 b) {
-    return {
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x
-    };
+    return { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
 }
 
-float dot(Vec3 a, Vec3 b) {
-    return a.x*b.x + a.y*b.y + a.z*b.z;
-}
+float dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 
-//  Ma trận 4x4 cơ bản
 struct Matrix4x4 {
     float m[16];
     Matrix4x4() {
-        for(int i=0;i<16;i++) m[i]=0;
-        m[0]=m[5]=m[10]=m[15]=1.0f;
+        m[0]=1; m[1]=0; m[2]=0; m[3]=0;
+        m[4]=0; m[5]=1; m[6]=0; m[7]=0;
+        m[8]=0; m[9]=0; m[10]=1; m[11]=0;
+        m[12]=0; m[13]=0; m[14]=0; m[15]=1;
     }
 };
+
 Matrix4x4 multiply(const Matrix4x4 &a,const Matrix4x4 &b){
     Matrix4x4 r;
     for(int i=0;i<4;i++){
@@ -87,6 +68,7 @@ Matrix4x4 multiply(const Matrix4x4 &a,const Matrix4x4 &b){
     }
     return r;
 }
+
 Matrix4x4 rotateXY(float ax,float ay){
     Matrix4x4 rx, ry;
     float cx=cosf(ax), sx=sinf(ax);
@@ -128,7 +110,7 @@ Matrix4x4 perspective(float fovy, float aspect, float nearVal, float farVal) {
     r.m[10] = (farVal + nearVal) / (nearVal - farVal);
     r.m[11] = -1.0f;
     r.m[14] = (2.0f * farVal * nearVal) / (nearVal - farVal);
-    r.m[15] = 0.0f; // Quan trọng: m[15] phải là 0
+    r.m[15] = 0.0f; 
     return r;
 }
 
@@ -136,31 +118,15 @@ Matrix4x4 lookAt(Vec3 eye, Vec3 center, Vec3 up) {
     Vec3 f = normalize({center.x - eye.x, center.y - eye.y, center.z - eye.z});
     Vec3 s = normalize(cross(f, up));
     Vec3 u = cross(s, f);
-
     Matrix4x4 r;
-    r.m[0] = s.x;
-    r.m[1] = u.x;
-    r.m[2] = -f.x;
-    r.m[3] = 0;
-
-    r.m[4] = s.y;
-    r.m[5] = u.y;
-    r.m[6] = -f.y;
-    r.m[7] = 0;
-
-    r.m[8] = s.z;
-    r.m[9] = u.z;
-    r.m[10] = -f.z;
-    r.m[11] = 0;
-
-    r.m[12] = -dot(s, eye);
-    r.m[13] = -dot(u, eye);
-    r.m[14] = dot(f, eye);
-    r.m[15] = 1;
+    r.m[0] = s.x; r.m[4] = s.y; r.m[8] = s.z; r.m[12] = -dot(s, eye);
+    r.m[1] = u.x; r.m[5] = u.y; r.m[9] = u.z; r.m[13] = -dot(u, eye);
+    r.m[2] = -f.x; r.m[6] = -f.y; r.m[10] = -f.z; r.m[14] = dot(f, eye);
+    r.m[3] = 0; r.m[7] = 0; r.m[11] = 0; r.m[15] = 1;
     return r;
 }
 
-// Noise đơn giản
+// Noise & Helper
 float simpleNoise(float x,float z,float freq){
     return (sinf(x*freq)*cosf(z*freq))*0.2f;
 }
@@ -183,9 +149,7 @@ void addTriangle(float* v0,float* v1,float* v2){
     for(int i=0;i<3;i++) normals.insert(normals.end(),{n[0],n[1],n[2]});
 }
 
-// Tạo núi lửa chi tiết
 void createDetailedVolcano(){
-    srand(time(0));
     const int BASE_SEGMENTS=64;
     const int HEIGHT_SEGMENTS=8;
     const float BASE_RADIUS=2.0f;
@@ -256,8 +220,18 @@ void createDetailedVolcano(){
         float v2[3]={CRATER_RADIUS*0.8f*cosf(a1),cBot,CRATER_RADIUS*0.8f*sinf(a1)};
         addTriangle(v0,v1,v2);
     }
+}
 
-    std::cout<<"Tạo núi lửa xong: "<<vertices.size()/3<<" đỉnh\n";
+void createLavaPlane() {
+    const float SIZE = 5.0f;
+    const float Y = -0.01f; 
+    float v0[3] = {-SIZE, Y, -SIZE};
+    float v1[3] = { SIZE, Y, -SIZE};
+    float v2[3] = { SIZE, Y,  SIZE};
+    float v3[3] = {-SIZE, Y,  SIZE};
+    
+    addTriangle(v0, v1, v2);
+    addTriangle(v0, v2, v3);
 }
 
 // Vertex shader
@@ -281,7 +255,6 @@ const char* fragmentShaderSource = R"(
 in vec3 vNormal;
 in vec3 vPos;          
 out vec4 FragColor;
-uniform float u_time;
 
 vec3 getVolcanoColor(float height){
     vec3 deepBrown = vec3(0.3,0.15,0.05);
@@ -296,41 +269,22 @@ vec3 getVolcanoColor(float height){
 }
 
 void main(){
-    if (vPos.y < -0.005) { 
-        FragColor = vec4(1.0, 0.4, 0.0, 1.0);
-        return; // Thoát ra ngay
+    if (vPos.y < 0.0) { 
+        FragColor = vec4(0.8, 0.25, 0.05, 1.0); 
+        return; 
     }
-
-    vec3 lightDir = normalize(vec3(1.0,2.0,1.0));
-    float diff = max(dot(normalize(vNormal),lightDir),0.36);
-    vec3 baseColor = getVolcanoColor(vPos.y);
-    float staticNoise = (sin(vPos.x*10.0+vPos.z*10.0)*0.3+0.7);
-    float pulse = (sin(u_time * 4.0) * 0.5 + 0.5);
-    float lavaGlow = (vPos.y > 2.1) ? (staticNoise * pulse) : 0.0;
-    baseColor += vec3(0.6, 0.2, 0.0) * lavaGlow;
-    vec4 finalColor = vec4(baseColor * diff, 1.0);
-    
-    FragColor = finalColor;
+    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.5));
+    float diff = max(dot(normalize(vNormal), lightDir), 0.3);
+    vec3 objectColor = getVolcanoColor(vPos.y);
+    FragColor = vec4(objectColor * diff, 1.0);
 }
 )";
 
 // Compile shader
 GLuint compileShader(){
-    GLuint vs=glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vs,1,&vertexShaderSource,NULL);
-    glCompileShader(vs);
-    GLint success; char info[512];
-    glGetShaderiv(vs,GL_COMPILE_STATUS,&success);
-    if(!success){glGetShaderInfoLog(vs,512,NULL,info);std::cout<<"Vertex Shader Error:\n"<<info<<std::endl;}
-    GLuint fs=glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fs,1,&fragmentShaderSource,NULL);
-    glCompileShader(fs);
-    glGetShaderiv(fs,GL_COMPILE_STATUS,&success);
-    if(!success){glGetShaderInfoLog(fs,512,NULL,info);std::cout<<"Fragment Shader Error:\n"<<info<<std::endl;}
-    GLuint prog=glCreateProgram();
-    glAttachShader(prog,vs);glAttachShader(prog,fs);glLinkProgram(prog);
-    glGetProgramiv(prog,GL_LINK_STATUS,&success);
-    if(!success){glGetProgramInfoLog(prog,512,NULL,info);std::cout<<"Shader Program Link Error:\n"<<info<<std::endl;}
+    GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vertexShaderSource,NULL); glCompileShader(vs);
+    GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fragmentShaderSource,NULL); glCompileShader(fs);
+    GLuint prog=glCreateProgram(); glAttachShader(prog,vs);glAttachShader(prog,fs);glLinkProgram(prog);
     glDeleteShader(vs);glDeleteShader(fs);
     return prog;
 }
@@ -407,9 +361,9 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 //  Xử lý các phím giữ (Di chuyển) 
 void processInput(GLFWwindow *window)
 {
-    float moveSpeed = 0.03f;  
-    float rotSpeed = 0.03f;   
-    float zoomSpeed = 0.05f;  
+    float moveSpeed = 0.01f;  
+    float rotSpeed = 0.01f;   
+    float zoomSpeed = 0.01f;  
 
     //  Di chuyển camera (W,A,S,D,R,F)
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) eyeZ -= moveSpeed; // Đi tới
@@ -439,62 +393,20 @@ void processInput(GLFWwindow *window)
 }
 
 
-void createLavaPlane() {
-    std::cout << "Tao mat phang dung nham..." << std::endl;
-    
-    // Kích thước của mặt phẳng (rất lớn)
-    const float PLANE_SIZE = 40.0f;
-    // Đặt Y thấp hơn chân núi lửa một chút (chân núi ở Y=0)
-    const float PLANE_Y = -0.01f; 
-
-    // Bốn đỉnh của hình vuông
-    float v0[3] = { -PLANE_SIZE, PLANE_Y, -PLANE_SIZE };
-    float v1[3] = {  PLANE_SIZE, PLANE_Y, -PLANE_SIZE };
-    float v2[3] = {  PLANE_SIZE, PLANE_Y,  PLANE_SIZE };
-    float v3[3] = { -PLANE_SIZE, PLANE_Y,  PLANE_SIZE };
-    
-    // Normal (pháp tuyến) cho cả mặt phẳng (luôn trỏ lên trên)
-    float n[3] = { 0.0f, 1.0f, 0.0f };
-
-    // Thêm 2 tam giác
-    
-    // Tam giác 1: v0, v1, v2
-    vertices.insert(vertices.end(), {v0[0], v0[1], v0[2]});
-    vertices.insert(vertices.end(), {v1[0], v1[1], v1[2]});
-    vertices.insert(vertices.end(), {v2[0], v2[1], v2[2]});
-    // Thêm 3 normal
-    normals.insert(normals.end(), {n[0], n[1], n[2]});
-    normals.insert(normals.end(), {n[0], n[1], n[2]});
-    normals.insert(normals.end(), {n[0], n[1], n[2]});
-
-    // Tam giác 2: v0, v2, v3
-    vertices.insert(vertices.end(), {v0[0], v0[1], v0[2]});
-    vertices.insert(vertices.end(), {v2[0], v2[1], v2[2]});
-    vertices.insert(vertices.end(), {v3[0], v3[1], v3[2]});
-    // Thêm 3 normal
-    normals.insert(normals.end(), {n[0], n[1], n[2]});
-    normals.insert(normals.end(), {n[0], n[1], n[2]});
-    normals.insert(normals.end(), {n[0], n[1], n[2]});
-}
-
 int main(){
-    std::cout<<"Khởi tạo núi lửa 3D..."<<std::endl;
-    if(!glfwInit()){std::cout<<"GLFW init error\n";return -1;}
+    if(!glfwInit()){return -1;}
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,3);
     glfwWindowHint(GLFW_OPENGL_PROFILE,GLFW_OPENGL_CORE_PROFILE);
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH,SCR_HEIGHT,"Nui Lua 3D - Full Controls",NULL,NULL);
-    if(!window){std::cout<<"Window creation error\n";glfwTerminate();return -1;}
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH,SCR_HEIGHT,"Nui Lua 3D",NULL,NULL);
+    if(!window){glfwTerminate();return -1;}
     glfwMakeContextCurrent(window);
-    if(glewInit()!=GLEW_OK){std::cout<<"GLEW init error\n";return -1;}
-    std::cout<<"OpenGL version: "<<glGetString(GL_VERSION)<<std::endl;
+    if(glewInit()!=GLEW_OK){return -1;}
 
     createDetailedVolcano();
     createLavaPlane();
     setupBuffers();
     shaderProgram = compileShader();
-
-    uTimeLocation = glGetUniformLocation(shaderProgram, "u_time");
 
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetCursorPosCallback(window, cursorPosCallback);
@@ -505,62 +417,43 @@ int main(){
 
     while(!glfwWindowShouldClose(window)){
         processInput(window);
-
-        if (isWireframe) {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        } else {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        }
         
-        glClearColor(0.7f,0.9f,1.0f,1.0f);
+        glClearColor(0.2f,0.2f,0.2f,1.0f);
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
         glUseProgram(shaderProgram);
-        glUniform1f(uTimeLocation, (float)glfwGetTime());
         glBindVertexArray(VAO);
-
 
         // MODEL Matrix (Xoay và Phóng to vật thể)
         Matrix4x4 rotMat = rotateXY(rotationX, rotationY);
-        Matrix4x4 scaleMat = scale(1.0f, 1.0f, 1.0f);
         // Dịch chuyển núi lửa xuống 1 chút để tâm xoay ở gốc 0,0,0
         Matrix4x4 transMat = translate(0.0f, -0.5f, 0.0f); 
-        Matrix4x4 modelMat = multiply(transMat, multiply(rotMat, scaleMat));
+        Matrix4x4 modelMat = multiply(transMat, rotMat);
 
-        // VIEW Matrix (Camera)
-        Matrix4x4 viewMat = lookAt(
-            {eyeX, eyeY, eyeZ}, 
-            {centerX, centerY, centerZ}, 
-            {upX, upY, upZ}
-        );
-
-        // PROJECTION Matrix (Phép chiếu)
+        // CAMERA (VIEW) Matrix and Phép CHIẾU (PROJECTION) Matrix
+        Matrix4x4 viewMat = lookAt({eyeX, eyeY, eyeZ}, {centerX, centerY, centerZ}, {upX, upY, upZ});
         Matrix4x4 projMat;
-        float ratio = (float)SCR_WIDTH / (float)SCR_HEIGHT;
 
-        float nearVal = 0.01f; // Giảm near plane để đỡ bị cắt khi lại gần
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height); // Lấy kích thước thực tế hiện tại
+        glViewport(0, 0, width, height); // Báo cho OpenGL biết kích thước mới
+        
+        float ratio = (float)width / (height > 0 ? height : 1);
+
+        float nearVal = 0.01f; 
         float farVal = 100.0f;
 
         if (isPerspective) {
             // Phép chiếu phối cảnh
-            // Áp dụng zoom bằng cách thay đổi FOV (góc nhìn)
-            // 45 độ là FOV cơ bản. Chia cho zoom để thu hẹp góc nhìn
-            float fovy_radians = (45.0f / zoom) * M_PI / 180.0f; 
+            float fovy = (45.0f / zoom) * M_PI / 180.0f; 
             
             // Giới hạn fov để tránh bị lật hình (quá zoom)
-            if (fovy_radians < 0.01f) fovy_radians = 0.01f; 
-            if (fovy_radians > 3.1f) fovy_radians = 3.1f; // ~178 độ
-
-            projMat = perspective(fovy_radians, ratio, nearVal, farVal);
+            if (fovy < 0.01f) fovy = 0.01f; if (fovy > 3.0f) fovy = 3.0f;
+            projMat = perspective(fovy, ratio, 0.01f, 100.0f);
         } else {
             // Phép chiếu song song
-            // Áp dụng zoom bằng cách thu hẹp/mở rộng khung nhìn
-            float left = -2.0f * ratio / zoom;
-            float right = 2.0f * ratio / zoom;
-            float bottom = -2.0f / zoom;
-            float top = 2.0f / zoom;
-            
-            projMat = ortho(left, right, bottom, top, nearVal, farVal);
+            float s = 2.0f / zoom;
+            projMat = ortho(-s*ratio, s*ratio, -s, s, 0.01f, 100.0f);
         }
 
         // FINAL Matrix (M * V * P)
@@ -580,6 +473,5 @@ int main(){
     glDeleteBuffers(2,VBO);
     glDeleteProgram(shaderProgram);
     glfwTerminate();
-    std::cout<<"Thoát chương trình.\n";
     return 0;
 }
